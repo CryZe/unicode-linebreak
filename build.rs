@@ -157,8 +157,8 @@ fn main() -> std::io::Result<()> {
 
     const PAGE_COUNT: usize = {};
 
-    const UNIFORM_PAGE: usize = 0x8000;
-    static PAGE_INDICES: [usize; {}] = [
+    const UNIFORM_PAGE: u16 = 0x8000;
+    static PAGE_INDICES: [u16; {}] = [
     ",
         page_count,
         page_indices.len()

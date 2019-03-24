@@ -1,5 +1,9 @@
 use std::mem;
 
+mod line_breaking;
+
+pub use line_breaking::{break_lines, AnnotatedVec, BreakOpportunity};
+
 /** Unicode Line Break property values. */
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -74,11 +78,11 @@ assert_eq!(break_class(0x2CF3), BreakClass::Alphabetic);
 ```
 */
 pub fn break_class(codepoint: u32) -> BreakClass {
-    let codepoint = codepoint as usize;
-    if (PAGE_INDICES[codepoint >> 8] & UNIFORM_PAGE) != 0 {
-        unsafe { mem::transmute((PAGE_INDICES[codepoint >> 8] & !UNIFORM_PAGE) as u8) }
+    let shift_index = (codepoint >> 8) as usize;
+    if (PAGE_INDICES[shift_index] & UNIFORM_PAGE) != 0 {
+        unsafe { mem::transmute((PAGE_INDICES[shift_index] & !UNIFORM_PAGE) as u8) }
     } else {
-        BREAK_PROP_DATA[PAGE_INDICES[codepoint >> 8]][codepoint & 0xFF]
+        BREAK_PROP_DATA[PAGE_INDICES[shift_index] as usize][(codepoint & 0xFF) as usize]
     }
 }
 
