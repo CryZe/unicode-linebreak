@@ -2,7 +2,9 @@ use std::mem;
 
 mod line_breaking;
 
-pub use line_breaking::{break_lines, AnnotatedVec, BreakOpportunity};
+pub use line_breaking::{
+    break_lines, AnnotatedVec, BreakOpportunity, Loose, Normal, Strict, Tailoring,
+};
 
 /** Unicode Line Break property values. */
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

@@ -16,6 +16,75 @@ pub enum BreakOpportunity {
     Must,
 }
 
+pub trait Tailoring {
+    fn resolve(value: char) -> BreakClass;
+    fn breaks_between_inseperable() -> bool {
+        false
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Strict;
+
+impl Tailoring for Strict {
+    fn resolve(value: char) -> BreakClass {
+        match break_class(value as _) {
+            BreakClass::Ambiguous | BreakClass::Surrogate | BreakClass::Unknown => {
+                BreakClass::Alphabetic
+            }
+            BreakClass::ComplexContext => {
+                if value.is_mark_spacing_combining() || value.is_mark_nonspacing() {
+                    BreakClass::CombiningMark
+                } else {
+                    BreakClass::Alphabetic
+                }
+            }
+            BreakClass::ConditionalJapaneseStarter => BreakClass::NonStarter,
+            class => class,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Normal;
+
+impl Tailoring for Normal {
+    fn resolve(value: char) -> BreakClass {
+        match break_class(value as _) {
+            BreakClass::Ambiguous | BreakClass::Surrogate | BreakClass::Unknown => {
+                BreakClass::Alphabetic
+            }
+            BreakClass::ComplexContext => {
+                if value.is_mark_spacing_combining() || value.is_mark_nonspacing() {
+                    BreakClass::CombiningMark
+                } else {
+                    BreakClass::Alphabetic
+                }
+            }
+            BreakClass::ConditionalJapaneseStarter => BreakClass::Ideographic,
+            class => class,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Loose;
+
+impl Tailoring for Loose {
+    fn resolve(value: char) -> BreakClass {
+        match value {
+            '\u{3005}' | '\u{303B}' | '\u{309D}' | '\u{309E}' | '\u{30FD}' | '\u{30FE}' => {
+                BreakClass::Unknown
+            }
+            value => Normal::resolve(value),
+        }
+    }
+
+    fn breaks_between_inseperable() -> bool {
+        true
+    }
+}
+
 impl BreakOpportunity {
     pub fn must_break(self) -> bool {
         match self {
@@ -47,9 +116,9 @@ impl AnnotatedVec {
         self.operators.clear();
     }
 
-    pub fn extend_str(&mut self, text: &str) {
+    pub fn extend_str<T: Tailoring>(&mut self, text: &str, _tailoring: T) {
         // LB1
-        self.classes.extend(text.chars().map(resolve_break_class));
+        self.classes.extend(text.chars().map(T::resolve));
         self.operators.resize(self.classes.len(), Operator::Unknown);
 
         // LB2 + LB3
@@ -61,11 +130,11 @@ impl AnnotatedVec {
         transition_after(self, |class| class == BreakClass::Mandatory, Operator::Must);
 
         // LB5
-        self.pairs(|mut a, b| {
-            if *a.class == BreakClass::CarriageReturn && *b.class == BreakClass::LineFeed {
-                a.transition(Operator::Never);
-            }
-        });
+        transition_between(
+            self,
+            |a, b| (BreakClass::CarriageReturn, BreakClass::LineFeed) == (a, b),
+            Operator::Never,
+        );
         transition_after(
             self,
             |class| match class {
@@ -272,69 +341,41 @@ impl AnnotatedVec {
         transition_between(
             self,
             |a, b| match a {
-                BreakClass::Alphabetic | BreakClass::HebrewLetter => b == BreakClass::Inseparable,
+                BreakClass::Alphabetic
+                | BreakClass::HebrewLetter
+                | BreakClass::Exclamation
+                | BreakClass::Ideographic
+                | BreakClass::EmojiBase
+                | BreakClass::EmojiModifier
+                | BreakClass::Numeric => b == BreakClass::Inseparable,
                 _ => false,
             },
-            Operator::Never,
-        );
-        transition_between(
-            self,
-            |a, b| (BreakClass::Exclamation, BreakClass::Inseparable) == (a, b),
-            Operator::Never,
-        );
-        transition_between(
-            self,
-            |a, b| match a {
-                BreakClass::Ideographic | BreakClass::EmojiBase | BreakClass::EmojiModifier => {
-                    b == BreakClass::Inseparable
-                }
-                _ => false,
-            },
-            Operator::Never,
-        );
-        transition_between(
-            self,
-            |a, b| (BreakClass::Inseparable, BreakClass::Inseparable) == (a, b),
-            Operator::Never,
-        );
-        transition_between(
-            self,
-            |a, b| (BreakClass::Numeric, BreakClass::Inseparable) == (a, b),
             Operator::Never,
         );
 
-        // LB23
+        if !T::breaks_between_inseperable() {
+            transition_between(
+                self,
+                |a, b| (BreakClass::Inseparable, BreakClass::Inseparable) == (a, b),
+                Operator::Never,
+            );
+        }
+
+        // LB23 + LB23a
         transition_between(
             self,
             |a, b| match a {
                 BreakClass::Alphabetic | BreakClass::HebrewLetter => b == BreakClass::Numeric,
-                _ => false,
-            },
-            Operator::Never,
-        );
-        transition_between(
-            self,
-            |a, b| match b {
-                BreakClass::Alphabetic | BreakClass::HebrewLetter => a == BreakClass::Numeric,
-                _ => false,
-            },
-            Operator::Never,
-        );
-
-        // LB23a
-        transition_between(
-            self,
-            |a, b| match b {
-                BreakClass::Ideographic | BreakClass::EmojiBase | BreakClass::EmojiModifier => {
-                    a == BreakClass::Prefix
-                }
-                _ => false,
-            },
-            Operator::Never,
-        );
-        transition_between(
-            self,
-            |a, b| match a {
+                BreakClass::Numeric => match b {
+                    BreakClass::Alphabetic | BreakClass::HebrewLetter => true,
+                    _ => false,
+                },
+                BreakClass::Prefix => match b {
+                    BreakClass::Ideographic | BreakClass::EmojiBase | BreakClass::EmojiModifier => {
+                        true
+                    }
+                    _ => false,
+                },
                 BreakClass::Ideographic | BreakClass::EmojiBase | BreakClass::EmojiModifier => {
                     b == BreakClass::Postfix
                 }
@@ -351,13 +392,6 @@ impl AnnotatedVec {
                     BreakClass::Alphabetic | BreakClass::HebrewLetter => true,
                     _ => false,
                 },
-                _ => false,
-            },
-            Operator::Never,
-        );
-        transition_between(
-            self,
-            |a, b| match a {
                 BreakClass::Alphabetic | BreakClass::HebrewLetter => match b {
                     BreakClass::Prefix | BreakClass::Postfix => true,
                     _ => false,
@@ -445,13 +479,6 @@ impl AnnotatedVec {
                     BreakClass::HangulVJamo | BreakClass::HangulTJamo => true,
                     _ => false,
                 },
-                _ => false,
-            },
-            Operator::Never,
-        );
-        transition_between(
-            self,
-            |a, b| match a {
                 BreakClass::HangulTJamo | BreakClass::HangulLvtSyllable => {
                     b == BreakClass::HangulTJamo
                 }
@@ -468,19 +495,10 @@ impl AnnotatedVec {
                 | BreakClass::HangulVJamo
                 | BreakClass::HangulTJamo
                 | BreakClass::HangulLvSyllable
-                | BreakClass::HangulLvtSyllable => b == BreakClass::Inseparable,
-                _ => false,
-            },
-            Operator::Never,
-        );
-        transition_between(
-            self,
-            |a, b| match a {
-                BreakClass::HangulLJamo
-                | BreakClass::HangulVJamo
-                | BreakClass::HangulTJamo
-                | BreakClass::HangulLvSyllable
-                | BreakClass::HangulLvtSyllable => b == BreakClass::Postfix,
+                | BreakClass::HangulLvtSyllable => match b {
+                    BreakClass::Inseparable | BreakClass::Postfix => true,
+                    _ => false,
+                },
                 _ => false,
             },
             Operator::Never,
@@ -498,25 +516,15 @@ impl AnnotatedVec {
             Operator::Never,
         );
 
-        // LB28
+        // LB28 + LB29
         transition_between(
             self,
             |a, b| match a {
-                BreakClass::Alphabetic | BreakClass::HebrewLetter => match b {
-                    BreakClass::Alphabetic | BreakClass::HebrewLetter => true,
-                    _ => false,
-                },
-                _ => false,
-            },
-            Operator::Never,
-        );
-
-        // LB29
-        transition_between(
-            self,
-            |a, b| match b {
-                BreakClass::Alphabetic | BreakClass::HebrewLetter => {
-                    a == BreakClass::InfixSeparator
+                BreakClass::Alphabetic | BreakClass::HebrewLetter | BreakClass::InfixSeparator => {
+                    match b {
+                        BreakClass::Alphabetic | BreakClass::HebrewLetter => true,
+                        _ => false,
+                    }
                 }
                 _ => false,
             },
@@ -653,23 +661,6 @@ impl<'a> Annotated<'a> {
     }
 }
 
-fn resolve_break_class(value: char) -> BreakClass {
-    match break_class(value as _) {
-        BreakClass::Ambiguous | BreakClass::Surrogate | BreakClass::Unknown => {
-            BreakClass::Alphabetic
-        }
-        BreakClass::ComplexContext => {
-            if value.is_mark_spacing_combining() || value.is_mark_nonspacing() {
-                BreakClass::CombiningMark
-            } else {
-                BreakClass::Alphabetic
-            }
-        }
-        BreakClass::ConditionalJapaneseStarter => BreakClass::NonStarter,
-        class => class,
-    }
-}
-
 fn transition_after_last_space(
     chars: &mut AnnotatedVec,
     mut start_at: impl FnMut(BreakClass) -> bool,
@@ -768,9 +759,12 @@ fn transition_between(
     });
 }
 
-pub fn break_lines(text: &str) -> impl Iterator<Item = (BreakOpportunity, &str)> {
+pub fn break_lines<T: Tailoring>(
+    text: &str,
+    tailoring: T,
+) -> impl Iterator<Item = (BreakOpportunity, &str)> {
     let mut vec = AnnotatedVec::new();
-    vec.extend_str(text);
+    vec.extend_str(text, tailoring);
     vec.into_split_str_iter(text)
 }
 
@@ -780,7 +774,7 @@ mod tests {
 
     #[test]
     fn simple() {
-        let chunks = break_lines("Hello, World!\r\nNew line here").collect::<Vec<_>>();
+        let chunks = break_lines("Hello, World!\r\nNew line here", Strict).collect::<Vec<_>>();
 
         assert_eq!(
             chunks,
@@ -817,7 +811,7 @@ mod tests {
                 }
 
                 annotated.clear();
-                annotated.extend_str(&test_text);
+                annotated.extend_str(&test_text, Strict);
 
                 for (expected, actual_operator) in operators.drain(..).zip(&annotated.operators) {
                     assert_eq!(

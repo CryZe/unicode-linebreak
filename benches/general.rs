@@ -1,4 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use unicode_linebreak::Strict;
 
 criterion_main!(benches);
 criterion_group!(benches, general, reuse, reuse_no_splitting);
@@ -27,7 +28,7 @@ Portuguese. See Section 5.3, Use of Hyphen.
 
 fn general(c: &mut Criterion) {
     c.bench_function("General", move |b| {
-        b.iter(|| unicode_linebreak::break_lines(TEXT).for_each(drop))
+        b.iter(|| unicode_linebreak::break_lines(TEXT, Strict).for_each(drop))
     });
 }
 
@@ -36,7 +37,7 @@ fn reuse(c: &mut Criterion) {
     c.bench_function("Reuse", move |b| {
         b.iter(|| {
             vec.clear();
-            vec.extend_str(TEXT);
+            vec.extend_str(TEXT, Strict);
             vec.split_str_iter(TEXT).for_each(drop);
         })
     });
@@ -47,7 +48,7 @@ fn reuse_no_splitting(c: &mut Criterion) {
     c.bench_function("Reuse (no splitting)", move |b| {
         b.iter(|| {
             vec.clear();
-            vec.extend_str(TEXT);
+            vec.extend_str(TEXT, Strict);
         })
     });
 }
